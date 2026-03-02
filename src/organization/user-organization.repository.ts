@@ -36,6 +36,26 @@ export class UserOrganizationRepository {
     });
   }
 
+  async findByOrganizationPaginated(
+    organizationId: string,
+    page: number,
+    size: number,
+  ): Promise<{ members: UserOrganizationEntity[]; total: number }> {
+    const skip = (page - 1) * size;
+    const [members, total] = await this.repo.findAndCount({
+      where: { organizationId },
+      relations: ['user'],
+      order: { createdAt: 'ASC' },
+      skip,
+      take: size,
+    });
+    return { members, total };
+  }
+
+  async deleteByUserId(userId: string): Promise<void> {
+    await this.repo.delete({ userId });
+  }
+
   async delete(id: string): Promise<void> {
     await this.repo.delete(id);
   }

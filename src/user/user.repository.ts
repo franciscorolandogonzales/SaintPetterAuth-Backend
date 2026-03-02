@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { UserEntity } from './user.entity';
 
 export interface IUserRepository {
@@ -35,6 +35,26 @@ export class UserRepository implements IUserRepository {
 
   async findHumanUsers(): Promise<UserEntity[]> {
     return this.repo.find({ where: { type: 'human' }, order: { createdAt: 'DESC' } });
+  }
+
+  async findHumanUsersPaginated(options: {
+    page: number;
+    size: number;
+    userIds?: string[];
+  }): Promise<{ users: UserEntity[]; total: number }> {
+    const { page, size, userIds } = options;
+    const skip = (page - 1) * size;
+    const where: Record<string, unknown> = { type: 'human' };
+    if (userIds !== undefined) {
+      where['id'] = In(userIds);
+    }
+    const [users, total] = await this.repo.findAndCount({
+      where,
+      order: { createdAt: 'DESC' },
+      skip,
+      take: size,
+    });
+    return { users, total };
   }
 
   async findServiceAccounts(organizationId?: string | null): Promise<UserEntity[]> {

@@ -21,6 +21,7 @@ import { Request } from 'express';
 import { ManagementGuard } from './management.guard';
 import { OrganizationRepository } from '../organization/organization.repository';
 import { UserOrganizationRepository } from '../organization/user-organization.repository';
+import { UserRoleRepository } from '../organization/user-role.repository';
 import { ResourceRepository } from '../organization/resource.repository';
 import { RoleRepository } from '../organization/role.repository';
 import { PermissionRepository } from '../organization/permission.repository';
@@ -53,6 +54,7 @@ export class ManagementController {
   constructor(
     private readonly orgRepo: OrganizationRepository,
     private readonly userOrgRepo: UserOrganizationRepository,
+    private readonly userRoleRepo: UserRoleRepository,
     private readonly resourceRepo: ResourceRepository,
     private readonly roleRepo: RoleRepository,
     private readonly permissionRepo: PermissionRepository,
@@ -83,6 +85,13 @@ export class ManagementController {
     if (allowed === null) return;
     if (!allowed.has(organizationId)) {
       throw new ForbiddenException('Access denied to this organization');
+    }
+  }
+
+  /** Throws 403 if an org_admin caller attempts to assign the org_admin role. */
+  private ensureNotElevatingToOrgAdmin(req: ReqWithManagement, roleSlug: string): void {
+    if (req.managementScope === 'org' && roleSlug === 'org_admin') {
+      throw new ForbiddenException('Organization administrators cannot assign the org_admin role.');
     }
   }
 
@@ -259,22 +268,78 @@ export class ManagementController {
   async listOrganizationUsers(
     @Req() req: ReqWithManagement,
     @Param('organizationId') organizationId: string,
+    @Query('page') pageQ?: string,
+    @Query('size') sizeQ?: string,
   ) {
     this.ensureOrgAccess(req, organizationId);
-    const members = await this.userOrgRepo.findByOrganization(organizationId);
+    const page = Math.max(1, parseInt(pageQ ?? '1', 10) || 1);
+    const size = Math.min(100, Math.max(1, parseInt(sizeQ ?? '20', 10) || 20));
+
+    const { members, total } = await this.userOrgRepo.findByOrganizationPaginated(organizationId, page, size);
+
     const users = await Promise.all(
       members.map(async (m) => {
-        const user = await this.userRepo.findById(m.userId);
+        const user = m.user ?? await this.userRepo.findById(m.userId);
+        const orgRoles = await this.userRoleRepo.findByUserAndOrg(m.userId, organizationId);
+        const topRole = orgRoles[0];
         return {
           userId: m.userId,
-          email: user?.email ?? '',
+          email: user?.email ?? null,
           displayName: user?.displayName ?? null,
-          type: user?.type ?? 'human',
+          roleSlug: topRole?.role?.slug ?? null,
+          roleId: topRole?.roleId ?? null,
           isDefault: m.isDefault,
         };
       }),
     );
-    return { users };
+    return { users, total };
+  }
+
+  @Patch('organizations/:organizationId/members/:userId')
+  async updateOrganizationMember(
+    @Req() req: ReqWithManagement,
+    @Param('organizationId') organizationId: string,
+    @Param('userId') userId: string,
+    @Body() body: { roleSlug: string },
+  ) {
+    this.ensureOrgAccess(req, organizationId);
+    if (!body.roleSlug) throw new BadRequestException('roleSlug is required');
+    this.ensureNotElevatingToOrgAdmin(req, body.roleSlug);
+
+    const membership = await this.userOrgRepo.findMembership(userId, organizationId);
+    if (!membership) throw new NotFoundException('User is not a member of this organization');
+
+    const role = await this.roleRepo.findBySlug(body.roleSlug, organizationId);
+    if (!role) throw new NotFoundException(`Role '${body.roleSlug}' not found in this organization`);
+
+    // Remove all existing org-scoped roles for this user and assign the new one
+    await this.userRoleRepo.deleteByUserAndOrg(userId, organizationId);
+    await this.provisionService.assignMember(userId, organizationId, role.id);
+
+    const user = await this.userRepo.findById(userId);
+    return {
+      userId,
+      email: user?.email ?? null,
+      displayName: user?.displayName ?? null,
+      organizationId,
+      roleSlug: role.slug,
+      roleId: role.id,
+    };
+  }
+
+  @Delete('organizations/:organizationId/members/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeOrganizationMember(
+    @Req() req: ReqWithManagement,
+    @Param('organizationId') organizationId: string,
+    @Param('userId') userId: string,
+  ) {
+    this.ensureOrgAccess(req, organizationId);
+    const membership = await this.userOrgRepo.findMembership(userId, organizationId);
+    if (!membership) throw new NotFoundException('User is not a member of this organization');
+
+    await this.userRoleRepo.deleteByUserAndOrg(userId, organizationId);
+    await this.userOrgRepo.delete(membership.id);
   }
 
   /** Add an existing user (by email) to an organization with an optional role. */
@@ -287,6 +352,9 @@ export class ManagementController {
   ) {
     this.ensureOrgAccess(req, organizationId);
     if (!body.email) throw new BadRequestException('email is required');
+
+    const roleSlug = body.roleSlug ?? 'member';
+    this.ensureNotElevatingToOrgAdmin(req, roleSlug);
 
     const org = await this.orgRepo.findById(organizationId);
     if (!org) throw new NotFoundException('Organization not found');
@@ -303,7 +371,6 @@ export class ManagementController {
       throw new ConflictException('User is already a member of this organization');
     }
 
-    const roleSlug = body.roleSlug ?? 'member';
     const role = await this.roleRepo.findBySlug(roleSlug, organizationId);
     if (!role) {
       throw new NotFoundException(
@@ -332,10 +399,12 @@ export class ManagementController {
     this.ensureOrgAccess(req, organizationId);
     if (!body.email) throw new BadRequestException('email is required');
 
+    const roleSlug = body.roleSlug ?? 'member';
+    this.ensureNotElevatingToOrgAdmin(req, roleSlug);
+
     const org = await this.orgRepo.findById(organizationId);
     if (!org) throw new NotFoundException('Organization not found');
 
-    const roleSlug = body.roleSlug ?? 'member';
     const token = await this.oneTimeLinkService.create({
       kind: 'invitation',
       payload: { email: body.email.toLowerCase().trim(), organizationId, roleSlug },
@@ -346,15 +415,45 @@ export class ManagementController {
     return { inviteLink, token, email: body.email, organizationId, roleSlug };
   }
 
-  // ── Users (platform_admin can list all human users) ────────────────────────
+  // ── Users ───────────────────────────────────────────────────────────────────
 
   @Get('users')
   async listUsers(
     @Req() req: ReqWithManagement,
+    @Query('page') pageQ?: string,
+    @Query('size') sizeQ?: string,
+    @Query('organizationId') filterOrgId?: string,
   ) {
-    this.ensurePlatformAdmin(req);
-    // List human users only (service accounts have their own endpoints)
-    const users = await this.userRepo.findHumanUsers();
+    const page = Math.max(1, parseInt(pageQ ?? '1', 10) || 1);
+    const size = Math.min(100, Math.max(1, parseInt(sizeQ ?? '20', 10) || 20));
+
+    let userIds: string[] | undefined;
+
+    if (req.managementScope === 'platform') {
+      // platform_admin: optional org filter
+      if (filterOrgId) {
+        const members = await this.userOrgRepo.findByOrganization(filterOrgId);
+        userIds = members.map((m) => m.userId);
+      }
+    } else {
+      // org_admin: must always be scoped to their orgs
+      const allowed = this.allowedOrgIds(req) ?? new Set<string>();
+      const targetOrgId = filterOrgId ?? undefined;
+      if (targetOrgId) {
+        if (!allowed.has(targetOrgId)) throw new ForbiddenException('Access denied to this organization');
+        const members = await this.userOrgRepo.findByOrganization(targetOrgId);
+        userIds = members.map((m) => m.userId);
+      } else {
+        const allIds = new Set<string>();
+        for (const oid of Array.from(allowed)) {
+          const members = await this.userOrgRepo.findByOrganization(oid);
+          members.forEach((m) => allIds.add(m.userId));
+        }
+        userIds = Array.from(allIds);
+      }
+    }
+
+    const { users, total } = await this.userRepo.findHumanUsersPaginated({ page, size, userIds });
     return {
       users: users.map((u) => ({
         id: u.id,
@@ -364,7 +463,102 @@ export class ManagementController {
         emailVerified: u.emailVerified,
         createdAt: u.createdAt.toISOString(),
       })),
+      total,
     };
+  }
+
+  @Get('users/:userId')
+  async getUser(
+    @Req() req: ReqWithManagement,
+    @Param('userId') userId: string,
+  ) {
+    const user = await this.userRepo.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+
+    if (req.managementScope !== 'platform') {
+      const memberships = await this.userOrgRepo.findByUser(userId);
+      const userOrgIds = new Set(memberships.map((m) => m.organizationId));
+      const allowed = this.allowedOrgIds(req) ?? new Set<string>();
+      const hasAccess = [...userOrgIds].some((id) => allowed.has(id));
+      if (!hasAccess) throw new ForbiddenException('Access denied to this user');
+    }
+
+    return {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      type: user.type,
+      emailVerified: user.emailVerified,
+      createdAt: user.createdAt.toISOString(),
+      updatedAt: user.updatedAt.toISOString(),
+    };
+  }
+
+  @Patch('users/:userId')
+  async updateUser(
+    @Req() req: ReqWithManagement,
+    @Param('userId') userId: string,
+    @Body() body: { displayName?: string | null; email?: string },
+  ) {
+    const user = await this.userRepo.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+    if (user.type !== 'human') throw new BadRequestException('Service accounts must be managed via /service-accounts endpoints.');
+
+    if (req.managementScope !== 'platform') {
+      const memberships = await this.userOrgRepo.findByUser(userId);
+      const userOrgIds = new Set(memberships.map((m) => m.organizationId));
+      const allowed = this.allowedOrgIds(req) ?? new Set<string>();
+      const hasAccess = [...userOrgIds].some((id) => allowed.has(id));
+      if (!hasAccess) throw new ForbiddenException('Access denied to this user');
+    }
+
+    if (body.displayName !== undefined) user.displayName = body.displayName;
+    if (body.email !== undefined) {
+      const normalized = body.email.toLowerCase().trim();
+      const existing = await this.userRepo.findByEmail(normalized);
+      if (existing && existing.id !== userId) {
+        throw new ConflictException('Email address is already registered.');
+      }
+      user.email = normalized;
+    }
+
+    const saved = await this.userRepo.save(user);
+    return {
+      id: saved.id,
+      email: saved.email,
+      displayName: saved.displayName,
+      type: saved.type,
+      emailVerified: saved.emailVerified,
+      createdAt: saved.createdAt.toISOString(),
+      updatedAt: saved.updatedAt.toISOString(),
+    };
+  }
+
+  @Delete('users/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteUser(
+    @Req() req: ReqWithManagement,
+    @Param('userId') userId: string,
+  ) {
+    const user = await this.userRepo.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+    if (user.type !== 'human') {
+      throw new BadRequestException('Service accounts must be deleted via /management/service-accounts endpoints.');
+    }
+
+    const isSelf = req.userId === userId;
+    if (!isSelf) {
+      if (req.managementScope !== 'platform') {
+        const memberships = await this.userOrgRepo.findByUser(userId);
+        const userOrgIds = new Set(memberships.map((m) => m.organizationId));
+        const allowed = this.allowedOrgIds(req) ?? new Set<string>();
+        const hasAccess = [...userOrgIds].some((id) => allowed.has(id));
+        if (!hasAccess) throw new ForbiddenException('Access denied to this user');
+      }
+    }
+
+    // onDelete: 'CASCADE' on all child entities ensures full cleanup on user delete
+    await this.userRepo.delete(userId);
   }
 
   // ── Resources ───────────────────────────────────────────────────────────────
