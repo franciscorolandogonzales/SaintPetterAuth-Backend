@@ -35,4 +35,18 @@ export class UserRoleRepository {
   async removeRoleFromUser(userId: string, roleId: string): Promise<void> {
     await this.repo.delete({ userId, roleId });
   }
+
+  /** Returns all role assignments for a user in a specific organization. */
+  async findByUserAndOrg(userId: string, organizationId: string): Promise<UserRoleEntity[]> {
+    const all = await this.repo.find({ where: { userId }, relations: ['role'] });
+    return all.filter((ur) => ur.role?.organizationId === organizationId);
+  }
+
+  /** Removes all org-scoped role assignments for a user in a specific organization. */
+  async deleteByUserAndOrg(userId: string, organizationId: string): Promise<void> {
+    const entries = await this.findByUserAndOrg(userId, organizationId);
+    for (const entry of entries) {
+      await this.repo.delete(entry.id);
+    }
+  }
 }
