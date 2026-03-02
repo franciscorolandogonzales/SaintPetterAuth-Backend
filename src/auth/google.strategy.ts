@@ -31,22 +31,52 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   ): Promise<UserEntity> {
     const providerId = profile.id;
     const email = profile.emails?.[0]?.value ?? `${profile.id}@google.oauth`;
-    const oauthAccount = await this.oauthAccountRepo.findByProvider('google', providerId);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'google.strategy.ts:validate:entry',message:'validate called',hypothesisId:'H1-H2',data:{providerId,email},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    let oauthAccount: Awaited<ReturnType<typeof this.oauthAccountRepo.findByProvider>>;
+    try {
+      oauthAccount = await this.oauthAccountRepo.findByProvider('google', providerId);
+    } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'google.strategy.ts:validate:findByProvider-error',message:'findByProvider threw',hypothesisId:'H1',data:{error:String(err)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      throw err;
+    }
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'google.strategy.ts:validate:oauthAccount',message:'findByProvider result',hypothesisId:'H2',data:{found:!!oauthAccount,userLoaded:!!(oauthAccount?.user)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     if (oauthAccount) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'google.strategy.ts:validate:returning-existing-user',message:'returning existing user from oauthAccount',hypothesisId:'H2',data:{userId:oauthAccount.user?.id,userIsNull:oauthAccount.user==null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       return oauthAccount.user;
     }
-    let user = await this.userRepo.findByEmail(email);
-    if (!user) {
-      user = new UserEntity();
-      user.email = email;
-      user.emailVerified = true;
-      user = await this.userRepo.save(user);
+    let user: UserEntity;
+    try {
+      const found = await this.userRepo.findByEmail(email);
+      if (!found) {
+        const nu = new UserEntity();
+        nu.email = email;
+        nu.emailVerified = true;
+        user = await this.userRepo.save(nu);
+      } else {
+        user = found;
+      }
+      const newAccount = new OAuthAccountEntity();
+      newAccount.userId = user.id;
+      newAccount.provider = 'google';
+      newAccount.providerId = providerId;
+      await this.oauthAccountRepo.save(newAccount);
+    } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'google.strategy.ts:validate:create-user-error',message:'error creating user/oauth account',hypothesisId:'H1',data:{error:String(err)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      throw err;
     }
-    const newAccount = new OAuthAccountEntity();
-    newAccount.userId = user.id;
-    newAccount.provider = 'google';
-    newAccount.providerId = providerId;
-    await this.oauthAccountRepo.save(newAccount);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'google.strategy.ts:validate:returning-new-user',message:'returning new user',hypothesisId:'H1-H2',data:{userId:user.id},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     return user;
   }
 }

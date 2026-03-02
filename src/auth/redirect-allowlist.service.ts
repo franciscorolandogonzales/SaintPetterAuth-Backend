@@ -39,7 +39,17 @@ export class RedirectAllowlistService implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    await this.refresh();
+    try {
+      await this.refresh();
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'redirect-allowlist.service.ts:onModuleInit:success',message:'allowlist loaded from DB',hypothesisId:'H5',data:{allowedCount:this.allowedUris.size,uris:Array.from(this.allowedUris)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+    } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'redirect-allowlist.service.ts:onModuleInit:error',message:'refresh() failed on module init',hypothesisId:'H5',data:{error:String(err)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      // Don't rethrow; fall back to env-only allowlist
+    }
   }
 
   /**

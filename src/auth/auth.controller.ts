@@ -105,15 +105,24 @@ export class AuthController {
   ): Promise<void> {
     // Re-validate state from Google's callback to prevent open redirect.
     const stateParam = req.query['state'];
+    const stateAllowed = typeof stateParam === 'string' && stateParam.length > 0
+      ? this.allowlist.isAllowed(stateParam) : false;
     const customRedirectUri =
-      typeof stateParam === 'string' && stateParam.length > 0 && this.allowlist.isAllowed(stateParam)
+      typeof stateParam === 'string' && stateParam.length > 0 && stateAllowed
         ? stateParam
         : null;
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.ts:googleCallback:entry',message:'googleCallback reached',hypothesisId:'H1-H3-H4',data:{hasUser:!!req.user,userType:typeof req.user,stateParam,stateAllowed,customRedirectUri,allowlistDefault:this.allowlist.getDefaultUrl()},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
 
     const defaultUrl = this.allowlist.getDefaultUrl();
 
     const user = req.user;
     if (!user) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.ts:googleCallback:no-user',message:'req.user is falsy — redirecting to error',hypothesisId:'H1-H3',data:{customRedirectUri,defaultUrl},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       const errorBase = customRedirectUri ?? `${defaultUrl}/login`;
       const separator = errorBase.includes('?') ? '&' : '?';
       res.redirect(`${errorBase}${separator}error=google_failed`);
@@ -123,12 +132,19 @@ export class AuthController {
     const ipAddress = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim()
       ?? req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'];
-    const tokens = await this.authService.loginWithUser(user, { ipAddress, userAgent });
 
-    const callbackBase = customRedirectUri ?? `${defaultUrl}/auth/callback`;
-    res.redirect(
-      `${callbackBase}#access_token=${encodeURIComponent(tokens.accessToken)}&refresh_token=${encodeURIComponent(tokens.refreshToken)}`,
-    );
+    try {
+      const tokens = await this.authService.loginWithUser(user, { ipAddress, userAgent });
+      const callbackBase = customRedirectUri ?? `${defaultUrl}/auth/callback`;
+      res.redirect(
+        `${callbackBase}#access_token=${encodeURIComponent(tokens.accessToken)}&refresh_token=${encodeURIComponent(tokens.refreshToken)}`,
+      );
+    } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.ts:googleCallback:loginWithUser-error',message:'loginWithUser threw',hypothesisId:'H3',data:{error:String(err)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      throw err;
+    }
   }
 
   @Post('mfa/totp/enroll')
