@@ -11,6 +11,7 @@ import {
   UseGuards,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { RegisterRequestDto } from './dto/register.dto';
 import { LoginRequestDto } from './dto/login.dto';
@@ -18,11 +19,13 @@ import { RefreshRequestDto } from './dto/refresh.dto';
 import { TokenResponseDto } from './dto/token-response.dto';
 import { PasswordResetRequestDto, PasswordResetConfirmDto } from './dto/password-reset.dto';
 import { MfaTotpVerifyRequestDto } from './dto/mfa.dto';
+import { CreateAppUserDto } from './dto/create-app-user.dto';
+import { AcceptInviteDto } from './dto/accept-invite.dto';
 import { AuthService } from './auth.service';
 import { MfaService } from './mfa.service';
 import { OneTimeLinkService } from '../one-time-link/one-time-link.service';
 import { AuthGuard as BearerAuthGuard } from './auth.guard';
-import { GoogleAuthGuard } from './google-auth.guard';
+import { GoogleAuthGuard, decodeState } from './google-auth.guard';
 import { RedirectAllowlistService } from './redirect-allowlist.service';
 import { UserEntity } from '../user/user.entity';
 
@@ -44,11 +47,13 @@ export class AuthController {
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   async register(@Body() body: RegisterRequestDto): Promise<TokenResponseDto> {
     return this.authService.register(body);
   }
 
   @Post('login')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   async login(@Body() body: LoginRequestDto, @Req() req: Request): Promise<TokenResponseDto> {
     const ipAddress = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim()
       ?? req.socket.remoteAddress;
@@ -63,12 +68,14 @@ export class AuthController {
 
   @Post('password-reset/request')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   async passwordResetRequest(@Body() body: PasswordResetRequestDto): Promise<void> {
     await this.authService.requestPasswordReset(body.email);
   }
 
   @Post('password-reset/confirm')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   async passwordResetConfirm(@Body() body: PasswordResetConfirmDto): Promise<void> {
     await this.authService.confirmPasswordReset(body.token, body.newPassword);
   }
@@ -103,26 +110,16 @@ export class AuthController {
     @Req() req: Request & { user?: UserEntity },
     @Res() res: Response,
   ): Promise<void> {
-    // Re-validate state from Google's callback to prevent open redirect.
-    const stateParam = req.query['state'];
-    const stateAllowed = typeof stateParam === 'string' && stateParam.length > 0
-      ? this.allowlist.isAllowed(stateParam) : false;
-    const customRedirectUri =
-      typeof stateParam === 'string' && stateParam.length > 0 && stateAllowed
-        ? stateParam
-        : null;
-
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.ts:googleCallback:entry',message:'googleCallback reached',hypothesisId:'H1-H3-H4',data:{hasUser:!!req.user,userType:typeof req.user,stateParam,stateAllowed,customRedirectUri,allowlistDefault:this.allowlist.getDefaultUrl()},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
+    const stateParam = req.query['state'] as string | undefined;
+    const { redirectUri: decodedRedirectUri, responseMode } = decodeState(stateParam);
+    const stateAllowed =
+      decodedRedirectUri != null && decodedRedirectUri.length > 0 && this.allowlist.isAllowed(decodedRedirectUri);
+    const customRedirectUri = stateAllowed ? decodedRedirectUri : null;
 
     const defaultUrl = this.allowlist.getDefaultUrl();
 
     const user = req.user;
     if (!user) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.ts:googleCallback:no-user',message:'req.user is falsy — redirecting to error',hypothesisId:'H1-H3',data:{customRedirectUri,defaultUrl},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       const errorBase = customRedirectUri ?? `${defaultUrl}/login`;
       const separator = errorBase.includes('?') ? '&' : '?';
       res.redirect(`${errorBase}${separator}error=google_failed`);
@@ -136,13 +133,15 @@ export class AuthController {
     try {
       const tokens = await this.authService.loginWithUser(user, { ipAddress, userAgent });
       const callbackBase = customRedirectUri ?? `${defaultUrl}/auth/callback`;
-      res.redirect(
-        `${callbackBase}#access_token=${encodeURIComponent(tokens.accessToken)}&refresh_token=${encodeURIComponent(tokens.refreshToken)}`,
-      );
+      const access = encodeURIComponent(tokens.accessToken);
+      const refresh = encodeURIComponent(tokens.refreshToken);
+      const tokenParams = `access_token=${access}&refresh_token=${refresh}`;
+      const redirectUrl =
+        responseMode === 'query'
+          ? `${callbackBase}${callbackBase.includes('?') ? '&' : '?'}${tokenParams}`
+          : `${callbackBase}#${tokenParams}`;
+      res.redirect(redirectUrl);
     } catch (err) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.ts:googleCallback:loginWithUser-error',message:'loginWithUser threw',hypothesisId:'H3',data:{error:String(err)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       throw err;
     }
   }
@@ -213,7 +212,7 @@ export class AuthController {
   @HttpCode(HttpStatus.CREATED)
   async createAppUser(
     @Req() req: ReqWithAuth,
-    @Body() body: { email: string; password?: string; sendInvite?: boolean },
+    @Body() body: CreateAppUserDto,
   ) {
     const orgContextId = req.orgContextId;
     if (!orgContextId) {
@@ -245,7 +244,7 @@ export class AuthController {
   @Post('invite/accept')
   @HttpCode(HttpStatus.CREATED)
   async acceptInvite(
-    @Body() body: { token: string; password: string },
+    @Body() body: AcceptInviteDto,
   ): Promise<TokenResponseDto> {
     return this.authService.acceptInvitation(body.token, body.password);
   }

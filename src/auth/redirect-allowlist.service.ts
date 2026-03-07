@@ -5,7 +5,7 @@ import { AllowedRedirectUriRepository } from './allowed-redirect-uri.repository'
 /**
  * Manages the allow list of redirect URIs permitted for third-party Google OAuth callbacks.
  *
- * The effective allow list = FRONTEND_URL (always) + GOOGLE_ALLOWED_REDIRECT_URIS env
+ * The effective allow list = SPA_FRONTEND_URL (always) + SPA_GOOGLE_ALLOWED_REDIRECT_URIS env
  *                          + all rows in the `allowed_redirect_uris` table.
  *
  * The list is cached in memory so that `isAllowed()` stays synchronous (required by
@@ -26,9 +26,9 @@ export class RedirectAllowlistService implements OnModuleInit {
     private readonly config: ConfigService,
     private readonly allowedRedirectUriRepo: AllowedRedirectUriRepository,
   ) {
-    this.defaultUrl = config.get<string>('FRONTEND_URL') ?? 'http://localhost:5678';
+    this.defaultUrl = config.get<string>('SPA_FRONTEND_URL') ?? config.get<string>('FRONTEND_URL') ?? 'http://localhost:5678';
 
-    const rawList = config.get<string>('GOOGLE_ALLOWED_REDIRECT_URIS') ?? '';
+    const rawList = config.get<string>('SPA_GOOGLE_ALLOWED_REDIRECT_URIS') ?? config.get<string>('GOOGLE_ALLOWED_REDIRECT_URIS') ?? '';
     this.envUris = rawList
       .split(',')
       .map((u) => u.trim())
@@ -41,13 +41,7 @@ export class RedirectAllowlistService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     try {
       await this.refresh();
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'redirect-allowlist.service.ts:onModuleInit:success',message:'allowlist loaded from DB',hypothesisId:'H5',data:{allowedCount:this.allowedUris.size,uris:Array.from(this.allowedUris)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-    } catch (err) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/bbfc576d-0bb4-453e-b278-dfbcda626b27',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'redirect-allowlist.service.ts:onModuleInit:error',message:'refresh() failed on module init',hypothesisId:'H5',data:{error:String(err)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
+    } catch {
       // Don't rethrow; fall back to env-only allowlist
     }
   }
@@ -71,7 +65,7 @@ export class RedirectAllowlistService implements OnModuleInit {
   }
 
   /**
-   * Returns the default redirect base URL (FRONTEND_URL).
+   * Returns the default redirect base URL (SPA_FRONTEND_URL).
    */
   getDefaultUrl(): string {
     return this.defaultUrl;

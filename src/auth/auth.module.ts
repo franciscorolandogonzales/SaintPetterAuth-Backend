@@ -5,6 +5,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { TokenService } from './token.service';
 import { AuthGuard } from './auth.guard';
+import { PlatformAdminGuard } from './platform-admin.guard';
 import { ApiKeyService } from './api-key.service';
 import { GoogleStrategy } from './google.strategy';
 import { MfaService } from './mfa.service';
@@ -34,6 +35,7 @@ import { OneTimeLinkModule } from '../one-time-link/one-time-link.module';
     AuthService,
     TokenService,
     AuthGuard,
+    PlatformAdminGuard,
     ApiKeyService,
     GoogleStrategy,
     MfaService,
@@ -45,6 +47,7 @@ import { OneTimeLinkModule } from '../one-time-link/one-time-link.module';
   exports: [
     TokenService,
     AuthGuard,
+    PlatformAdminGuard,
     ApiKeyService,
     OrgContextMiddleware,
     RedirectAllowlistService,

@@ -1,0 +1,13 @@
+node_modules
+dist
+.env
+.env.*
+coverage
+*.log
+.git
+.vscode
+.cursor
+test
+__tests__
+*.spec.ts
+*.test.ts

@@ -22,7 +22,7 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
   private destroyed = false;
 
   constructor(private readonly config: ConfigService) {
-    this.url = config.get<string>('RABBITMQ_URL');
+    this.url = config.get<string>('SPA_RABBITMQ_URL') ?? config.get<string>('RABBITMQ_URL');
   }
 
   get isEnabled(): boolean {
@@ -31,7 +31,7 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     if (!this.url) {
-      this.logger.warn('RABBITMQ_URL not set; RabbitMQ integration disabled (sync fallback active).');
+      this.logger.warn('SPA_RABBITMQ_URL not set; RabbitMQ integration disabled (sync fallback active).');
       return;
     }
     await this.connect();

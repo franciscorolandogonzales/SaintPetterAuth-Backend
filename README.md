@@ -17,24 +17,32 @@ yarn install
 
 ## Environment
 
-Set before running (or use `source ../local/scripts/setup-env.sh`):
+Variables con prefijo **SPA_** (ver `backend/.env.example`). Puedes usar `backend/.env` o `source ../local/scripts/setup-env.sh`:
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `POSTGRES_URL` | Yes | Postgres connection string (e.g. `postgresql://user:pass@localhost:5432/db`) |
-| `REDIS_URL` | No | Redis URL for opaque token store (e.g. `redis://localhost:6379`) |
-| `BACKEND_PORT` | No | Port (default 4567) |
-| `FRONTEND_URL` | No | Frontend base URL used in email links (default `http://localhost:5678`) |
-| `CORS_ORIGIN` | No | CORS allowed origin (default = `FRONTEND_URL`) |
-| `GOOGLE_CLIENT_ID` | No | Google OAuth client ID (loaded by `load-google-oauth.sh`) |
-| `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
-| `GOOGLE_CALLBACK_URL` | No | Google OAuth callback URL (default `http://localhost:4567/auth/google/callback`) |
-| `GOOGLE_ALLOWED_REDIRECT_URIS` | No | Optional comma-separated list of statically allowed `redirect_uri` values for third-party frontends (e.g. `https://app1.com/callback,https://app2.com/auth/cb`). The effective allow list = `FRONTEND_URL` (always) + this env var + URIs stored in DB via the console or `POST /management/redirect-uris`. Dynamic URIs added through the console or Management API take effect immediately without restart. |
-| `SMTP_HOST` | No | SMTP host for email notifications (Mailhog on port 1025 locally) |
-| `SMTP_PORT` | No | SMTP port (default 1025) |
-| `SMTP_FROM` | No | Sender address (default `noreply@saintpetter.local`) |
-| `RABBITMQ_URL` | No | RabbitMQ URL for async notifications |
-| `PLATFORM_ADMIN_EMAIL` | No | On startup, assigns `platform_admin` role to this user (sign in first, then restart) |
+| Variable | Requerida | Descripción |
+|----------|-----------|-------------|
+| `SPA_POSTGRES_URL` | Sí | Cadena de conexión Postgres |
+| `SPA_REDIS_URL` | No | Redis (ej. `redis://127.0.0.1:6379`) |
+| `SPA_FRONTEND_URL` | Sí | URL del frontend (emails, CORS) |
+| `SPA_BACKEND_PORT` | No | Puerto (default 4567) |
+| `SPA_CORS_ORIGIN` | No | Origen CORS (default = `SPA_FRONTEND_URL`) |
+| `SPA_GOOGLE_CLIENT_ID` / `SPA_GOOGLE_CLIENT_SECRET` / `SPA_GOOGLE_CALLBACK_URL` | No | Google OAuth |
+| `SPA_GOOGLE_ALLOWED_REDIRECT_URIS` | No | Lista de `redirect_uri` permitidos (además del frontend) |
+| `SPA_SMTP_HOST` / `SPA_SMTP_PORT` / `SPA_SMTP_FROM` | No | SMTP (Mailhog: 127.0.0.1:1025) |
+| `SPA_RABBITMQ_URL` | No | RabbitMQ para cola de notificaciones |
+| `SPA_PLATFORM_ADMIN_EMAIL` | No | Al arrancar, el seed asigna rol `platform_admin` a este email (el usuario debe existir; inicia sesión una vez y reinicia el backend) |
+
+### Acceso denegado a la consola de gestión
+
+Si puedes hacer login pero ves *"Access Denied - You need the platform_admin or org_admin role"*:
+
+1. **Asignar rol sin reiniciar:** desde `backend/` ejecuta:
+   ```bash
+   yarn assign-platform-admin franciscorolandogonzalezburgos@gmail.com
+   ```
+   (o el email con el que iniciaste sesión). Usa las variables de `backend/.env` o `SPA_POSTGRES_URL`.
+
+2. **O bien** define `SPA_PLATFORM_ADMIN_EMAIL` en `.env` (o al lanzar el script de local), reinicia el backend y vuelve a entrar en la consola.
 
 ## Run
 

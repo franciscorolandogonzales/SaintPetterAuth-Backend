@@ -6,7 +6,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   private client: Redis | null = null;
 
   onModuleInit() {
-    const url = process.env.REDIS_URL;
+    const url = process.env.SPA_REDIS_URL ?? process.env.REDIS_URL;
     if (!url) return;
     this.client = new Redis(url);
   }

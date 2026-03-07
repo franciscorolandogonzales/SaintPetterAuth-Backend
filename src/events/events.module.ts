@@ -6,11 +6,13 @@ import { EventsRepository } from './events.repository';
 import { DomainEventEntity } from './domain-event.entity';
 import { AuthModule } from '../auth/auth.module';
 import { UserModule } from '../user/user.module';
+import { OrganizationModule } from '../organization/organization.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([DomainEventEntity]),
     UserModule,
+    OrganizationModule,
     forwardRef(() => AuthModule),
   ],
   controllers: [EventsController],

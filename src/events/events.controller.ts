@@ -1,10 +1,10 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { EventListResponseDto } from './dto/event.dto';
 import { EventsService } from './events.service';
-import { AuthGuard } from '../auth/auth.guard';
+import { PlatformAdminGuard } from '../auth/platform-admin.guard';
 
 @Controller('events')
-@UseGuards(AuthGuard)
+@UseGuards(PlatformAdminGuard)
 export class EventsController {
   constructor(private readonly eventsService: EventsService) {}
 

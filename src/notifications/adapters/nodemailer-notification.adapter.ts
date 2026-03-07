@@ -17,11 +17,11 @@ export class NodemailerNotificationAdapter implements ISendNotificationPort {
   private readonly templateRegistry: TemplateRegistry;
 
   constructor(private readonly config: ConfigService) {
-    const host = config.get<string>('SMTP_HOST', '127.0.0.1');
-    const port = config.get<number>('SMTP_PORT', 1025);
-    const user = config.get<string>('SMTP_USER', '');
-    const pass = config.get<string>('SMTP_PASS', '');
-    this.from = config.get<string>('SMTP_FROM', 'noreply@saintpetter.local');
+    const host = config.get<string>('SPA_SMTP_HOST') ?? config.get<string>('SMTP_HOST', '127.0.0.1');
+    const port = config.get<number>('SPA_SMTP_PORT') ?? config.get<number>('SMTP_PORT', 1025);
+    const user = config.get<string>('SPA_SMTP_USER') ?? config.get<string>('SMTP_USER', '');
+    const pass = config.get<string>('SPA_SMTP_PASS') ?? config.get<string>('SMTP_PASS', '');
+    this.from = config.get<string>('SPA_SMTP_FROM') ?? config.get<string>('SMTP_FROM', 'noreply@saintpetter.local');
 
     this.transporter = nodemailer.createTransport({
       host,

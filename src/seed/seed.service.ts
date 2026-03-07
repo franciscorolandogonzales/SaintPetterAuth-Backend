@@ -50,51 +50,57 @@ export class SeedService implements OnApplicationBootstrap {
     await this.ensureSystemResources(systemOrg.id);
     const rolesMap = await this.ensureDefaultRoles();
     await this.ensurePermissions(rolesMap);
-    await this.ensurePlatformAdmin();
+    const platformAdminStatus = await this.ensurePlatformAdmin();
+    this.logger.log(`Platform admin: ${platformAdminStatus}`);
     this.logger.log('Bootstrap seed complete.');
   }
 
-  /** If PLATFORM_ADMIN_EMAIL is set, assign platform_admin role to that user (by email). */
-  private async ensurePlatformAdmin(): Promise<void> {
-    const email = process.env.PLATFORM_ADMIN_EMAIL?.trim();
-    if (!email) return;
-
-    const user = await this.userRepo.findByEmail(email);
-    if (!user) {
-      this.logger.warn(`PLATFORM_ADMIN_EMAIL=${email}: user not found. Sign in once with this email, then restart the backend.`);
-      return;
+  /** If SPA_PLATFORM_ADMIN_EMAIL or PLATFORM_ADMIN_EMAIL is set, assign platform_admin role to that user (by email). Returns a short status message for logs. */
+  private async ensurePlatformAdmin(): Promise<string> {
+    const email = (process.env.SPA_PLATFORM_ADMIN_EMAIL ?? process.env.PLATFORM_ADMIN_EMAIL)?.trim();
+    if (!email) {
+      return 'SPA_PLATFORM_ADMIN_EMAIL not set. Set it in containers/.env and recreate the backend to assign the role.';
     }
 
     const platformAdminRole = await this.roleRepo.findBySlug('platform_admin', null);
     if (!platformAdminRole) {
-      this.logger.warn('platform_admin role not found (seed order issue?).');
-      return;
+      return 'platform_admin role not found (seed order issue?).';
+    }
+
+    const user = await this.userRepo.findByEmail(email);
+    if (!user) {
+      return `user not found for email ${email}. Sign in once (register or Google), then run restart-backend.sh or down/up.`;
     }
 
     const existing = await this.userRoleRepo.findUserRole(user.id, platformAdminRole.id);
-    if (existing) return;
+    if (existing) {
+      return `already assigned to ${email}.`;
+    }
 
     const ur = new UserRoleEntity();
     ur.userId = user.id;
     ur.roleId = platformAdminRole.id;
     await this.userRoleRepo.save(ur);
-    this.logger.log(`Assigned platform_admin role to ${email}.`);
+    return `assigned to ${email} (userId=${user.id}).`;
   }
 
   private async ensureSystemOrganization(): Promise<OrganizationEntity> {
     const existing = await this.orgRepo.findBySlug(SYSTEM_ORG_SLUG);
-    if (existing) return existing;
-
+    if (existing) {
+      this.logger.log('System organization: ok (existing).');
+      return existing;
+    }
     const org = new OrganizationEntity();
     org.name = 'System';
     org.slug = SYSTEM_ORG_SLUG;
     org.metadata = { system: true };
     const saved = await this.orgRepo.save(org);
-    this.logger.log(`Created system organization: ${saved.id}`);
+    this.logger.log(`System organization: created (${saved.id}).`);
     return saved;
   }
 
   private async ensureSystemResources(systemOrgId: string): Promise<void> {
+    let created = 0;
     for (const identifier of SYSTEM_RESOURCES) {
       const existing = await this.resourceRepo.findByOrgAndTypeAndIdentifier(
         systemOrgId,
@@ -102,18 +108,19 @@ export class SeedService implements OnApplicationBootstrap {
         identifier,
       );
       if (existing) continue;
-
       const entity = new ResourceEntity();
       entity.organizationId = systemOrgId;
       entity.type = 'auth';
       entity.identifier = identifier;
       await this.resourceRepo.save(entity);
-      this.logger.log(`Created system resource: auth:${identifier}`);
+      created++;
     }
+    this.logger.log(`System resources: ok (${created} created, ${SYSTEM_RESOURCES.length - created} existing).`);
   }
 
   private async ensureDefaultRoles(): Promise<Map<string, RoleEntity>> {
     const map = new Map<string, RoleEntity>();
+    let created = 0;
     for (const def of DEFAULT_ROLES) {
       let role = await this.roleRepo.findBySlug(def.slug, null);
       if (!role) {
@@ -122,10 +129,11 @@ export class SeedService implements OnApplicationBootstrap {
         entity.slug = def.slug;
         entity.organizationId = null;
         role = await this.roleRepo.save(entity);
-        this.logger.log(`Created default role: ${def.slug} (${role.id})`);
+        created++;
       }
       map.set(def.slug, role);
     }
+    this.logger.log(`Default roles: ok (${created} created, ${DEFAULT_ROLES.length - created} existing).`);
     return map;
   }
 
@@ -137,25 +145,23 @@ export class SeedService implements OnApplicationBootstrap {
       ['org_admin', ORG_ADMIN_PERMISSIONS],
       ['member', MEMBER_PERMISSIONS],
     ];
-
+    let created = 0;
     for (const [slug, perms] of permDefs) {
       const role = rolesMap.get(slug);
       if (!role) continue;
-
       const existing = await this.permissionRepo.findByRole(role.id);
       const existingKeys = new Set(existing.map((p) => `${p.action}:${p.resourceIdentifier}`));
-
       for (const p of perms) {
         const key = `${p.action}:${p.resourceIdentifier}`;
         if (existingKeys.has(key)) continue;
-
         const entity = new PermissionEntity();
         entity.roleId = role.id;
         entity.action = p.action;
         entity.resourceIdentifier = p.resourceIdentifier;
         await this.permissionRepo.save(entity);
-        this.logger.log(`Created permission: ${slug} -> ${key}`);
+        created++;
       }
     }
+    this.logger.log(`Permissions: ok (${created} created, rest existing).`);
   }
 }

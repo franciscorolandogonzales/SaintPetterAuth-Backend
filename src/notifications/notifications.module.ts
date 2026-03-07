@@ -9,9 +9,10 @@ import { NodemailerNotificationAdapter } from './adapters/nodemailer-notificatio
 import { AuthModule } from '../auth/auth.module';
 import { RabbitMQModule } from '../rabbitmq/rabbitmq.module';
 import { UserModule } from '../user/user.module';
+import { OrganizationModule } from '../organization/organization.module';
 
 @Module({
-  imports: [ConfigModule, RabbitMQModule, UserModule, forwardRef(() => AuthModule)],
+  imports: [ConfigModule, RabbitMQModule, UserModule, OrganizationModule, forwardRef(() => AuthModule)],
   controllers: [NotificationsController],
   providers: [
     NotificationsService,
@@ -19,7 +20,7 @@ import { UserModule } from '../user/user.module';
     {
       provide: SEND_NOTIFICATION_PORT,
       useFactory: (config: ConfigService) => {
-        const smtpHost = config.get<string>('SMTP_HOST');
+        const smtpHost = config.get<string>('SPA_SMTP_HOST') ?? config.get<string>('SMTP_HOST');
         if (smtpHost) {
           return new NodemailerNotificationAdapter(config);
         }
